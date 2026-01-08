@@ -6,14 +6,12 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-
 # Garante que a raiz do app está no PYTHONPATH (Streamlit Cloud às vezes precisa)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 from pipeline import process_uploaded_pdf
-
 
 st.set_page_config(page_title="Melodia Finance", layout="wide")
 
@@ -100,55 +98,63 @@ if uploaded:
     c1, c2, c3 = st.columns(3)
 
     if not df_cat_f.empty and "TOTAL GERAL" in df_cat_f.columns:
-        c1.metric("Total (Categorias)", f"R$ {pd.to_numeric(df_cat_f['TOTAL GERAL'], errors='coerce').fillna(0).sum():,.2f}")
+        c1.metric(
+            "Total (Categorias)",
+            f"R$ {pd.to_numeric(df_cat_f['TOTAL GERAL'], errors='coerce').fillna(0).sum():,.2f}"
+        )
     else:
         c1.metric("Total (Categorias)", "—")
 
     if not df_rub_f.empty and "TOTAL GERAL" in df_rub_f.columns:
-        c2.metric("Total (Rubricas)", f"R$ {pd.to_numeric(df_rub_f['TOTAL GERAL'], errors='coerce').fillna(0).sum():,.2f}")
+        c2.metric(
+            "Total (Rubricas)",
+            f"R$ {pd.to_numeric(df_rub_f['TOTAL GERAL'], errors='coerce').fillna(0).sum():,.2f}"
+        )
     else:
         c2.metric("Total (Rubricas)", "—")
 
     if not df_obr_f.empty and "Rateio" in df_obr_f.columns:
-        c3.metric("Total (Obras)", f"R$ {pd.to_numeric(df_obr_f['Rateio'], errors='coerce').fillna(0).sum():,.2f}")
+        c3.metric(
+            "Total (Obras)",
+            f"R$ {pd.to_numeric(df_obr_f['Rateio'], errors='coerce').fillna(0).sum():,.2f}"
+        )
     else:
         c3.metric("Total (Obras)", "—")
 
     # -------------------------
-    # Evolução mensal (Rubricas) - BLINDADO
+    # Evolução mensal (Rubricas) - CORRIGIDO
     # -------------------------
     st.subheader("Evolução mensal (Rubricas)")
 
     if df_rub_f is None or df_rub_f.empty:
         st.info("Sem dados de rubricas para plotar.")
+    elif "DATA REFERENTE" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
+        st.warning("Rubricas: colunas esperadas não encontradas (DATA REFERENTE / TOTAL GERAL).")
+        st.dataframe(df_rub_f.head(30))
     else:
-        if "DATA REFERENTE" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
-            st.warning("Rubricas: colunas esperadas não encontradas (DATA REFERENTE / TOTAL GERAL).")
+        tmp = df_rub_f.copy()
+        tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
+        tmp["TOTAL GERAL"] = pd.to_numeric(tmp["TOTAL GERAL"], errors="coerce").fillna(0)
+        tmp = tmp.dropna(subset=["DATA REFERENTE"])
+
+        if tmp.empty:
+            st.warning("Rubricas: DATA REFERENTE ficou vazia após conversão.")
             st.dataframe(df_rub_f.head(30))
         else:
-            tmp = df_rub_f.copy()
-            tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
-            tmp["TOTAL GERAL"] = pd.to_numeric(tmp["TOTAL GERAL"], errors="coerce").fillna(0)
-            tmp = tmp.dropna(subset=["DATA REFERENTE"])
+            # Use MES como string YYYY-MM para evitar horários estranhos no eixo X
+            tmp["MES"] = tmp["DATA REFERENTE"].dt.to_period("M").astype(str)
 
-            if tmp.empty:
-                st.warning("Rubricas: DATA REFERENTE ficou vazia após conversão.")
-                st.dataframe(df_rub_f.head(30))
-            else:
-                rub_month = (
-                    tmp.set_index("DATA REFERENTE")
-                       .resample("MS")["TOTAL GERAL"]
-                       .sum()
-                       .reset_index()
-                )
+            rub_month = (
+                tmp.groupby("MES", as_index=False)["TOTAL GERAL"]
+                   .sum()
+                   .sort_values("MES")
+            )
 
-                # ordena sem depender do nome
-                rub_month = rub_month.sort_values(by=rub_month.columns[0])
-
-                st.plotly_chart(
-                    px.line(rub_month, x=rub_month.columns[0], y="TOTAL GERAL"),
-                    use_container_width=True
-                )
+            # Com poucos meses, barra funciona melhor; se tiver muitos meses, pode trocar para linha
+            st.plotly_chart(
+                px.bar(rub_month, x="MES", y="TOTAL GERAL"),
+                use_container_width=True
+            )
 
     # -------------------------
     # Top 10 Obras
@@ -167,7 +173,11 @@ if uploaded:
                 .sort_values("Rateio", ascending=False)
                 .head(10)
         )
-        st.plotly_chart(px.bar(top_obras, x="Nome Obra", y="Rateio"), use_container_width=True)
+
+        st.plotly_chart(
+            px.bar(top_obras, x="Nome Obra", y="Rateio"),
+            use_container_width=True
+        )
 
     # -------------------------
     # Distribuição por Rubrica Modelo
@@ -186,7 +196,11 @@ if uploaded:
                  .sum()
                  .sort_values("TOTAL GERAL", ascending=False)
         )
-        st.plotly_chart(px.bar(rub_model, x="Rubrica_Modelo", y="TOTAL GERAL"), use_container_width=True)
+
+        st.plotly_chart(
+            px.bar(rub_model, x="Rubrica_Modelo", y="TOTAL GERAL"),
+            use_container_width=True
+        )
 
     # -------------------------
     # Tabelas
