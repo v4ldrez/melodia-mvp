@@ -6,14 +6,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-import numpy as np
-import pandas as pd
-
-if "Rateio" in df_obras.columns:
-    df_obras["Rateio"] = pd.to_numeric(df_obras["Rateio"], errors="coerce").fillna(0.0)
-
-    # remove outliers absurdos (ex.: > 1 milhão num mês) — ajuste se quiser
-    df_obras = df_obras[df_obras["Rateio"].between(0, 1_000_000)]
 
 # Garante que a raiz do app está no PYTHONPATH (Streamlit Cloud às vezes precisa)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
