@@ -102,11 +102,44 @@ if uploaded:
         c3.metric("Total (Obras)", "—")
 
     st.subheader("Evolução mensal (Rubricas)")
-    if not df_rub_f.empty and {"DATA REFERENTE", "TOTAL GERAL"}.issubset(df_rub_f.columns):
-        rub_month = df_rub_f.groupby(pd.Grouper(key="DATA REFERENTE", freq="MS"), as_index=False)["TOTAL GERAL"].sum()
-        st.plotly_chart(px.line(rub_month, x="DATA REFERENTE", y="TOTAL GERAL"), use_container_width=True)
+
+if df_rub_f is None or df_rub_f.empty:
+    st.info("Sem dados de rubricas para plotar.")
+else:
+    # Debug leve (pode remover depois)
+    # st.write("Colunas rubricas:", df_rub_f.columns.tolist())
+
+    if "DATA REFERENTE" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
+        st.warning("Rubricas: colunas esperadas não encontradas (DATA REFERENTE / TOTAL GERAL).")
+        st.dataframe(df_rub_f.head(20))
     else:
-        st.info("Sem dados suficientes para evolução de rubricas.")
+        tmp = df_rub_f.copy()
+
+        # Garantir tipos
+        tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
+        tmp["TOTAL GERAL"] = pd.to_numeric(tmp["TOTAL GERAL"], errors="coerce").fillna(0)
+
+        # Remover datas inválidas
+        tmp = tmp.dropna(subset=["DATA REFERENTE"])
+
+        if tmp.empty:
+            st.warning("Rubricas: DATA REFERENTE ficou vazia após conversão (verifique o parsing do mês/ano).")
+            st.dataframe(df_rub_f.head(20))
+        else:
+            rub_month = (
+                tmp.groupby(pd.Grouper(key="DATA REFERENTE", freq="MS"), as_index=False)["TOTAL GERAL"]
+                .sum()
+                .sort_values("DATA REFERENTE")
+            )
+
+            if rub_month.empty:
+                st.info("Sem pontos suficientes para gerar a evolução mensal.")
+            else:
+                st.plotly_chart(
+                    px.line(rub_month, x="DATA REFERENTE", y="TOTAL GERAL"),
+                    use_container_width=True
+                )
+
 
     st.subheader("Top 10 Obras")
     if not df_obr_f.empty and {"Nome Obra", "Rateio"}.issubset(df_obr_f.columns):
