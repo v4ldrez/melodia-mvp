@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Garantir path
+# Garante que a raiz do app está no PYTHONPATH (Streamlit Cloud às vezes precisa)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
@@ -39,7 +39,8 @@ if uploaded_files:
         for i, uploaded in enumerate(uploaded_files, start=1):
             status.update(label=f"Processando {uploaded.name} ({i}/{len(uploaded_files)})")
 
-            pdf_dir = os.path.join(base_run_dir, uploaded.name.replace(".pdf", ""))
+            # pasta isolada por PDF (evita que um PDF contamine o outro)
+            pdf_dir = os.path.join(base_run_dir, f"{i:03d}_{uploaded.name.replace('.pdf','')}")
             os.makedirs(pdf_dir, exist_ok=True)
 
             pdf_path = os.path.join(pdf_dir, uploaded.name)
@@ -73,7 +74,7 @@ if uploaded_files:
     df_rub = pd.concat(dfs_rub, ignore_index=True) if dfs_rub else pd.DataFrame()
     df_obr = pd.concat(dfs_obr, ignore_index=True) if dfs_obr else pd.DataFrame()
 
-    # Normalizações
+    # Normalizações de data
     if "DATA REFERENTE" in df_cat.columns:
         df_cat["DATA REFERENTE"] = pd.to_datetime(df_cat["DATA REFERENTE"], errors="coerce")
 
@@ -86,29 +87,22 @@ if uploaded_files:
     st.divider()
     st.header("Dashboards")
 
-    # Datas globais
+    # Range global de datas
     dates = []
-    for df, col in [
-        (df_cat, "DATA REFERENTE"),
-        (df_rub, "DATA REFERENTE"),
-        (df_obr, "Data")
-    ]:
+    for df, col in [(df_cat, "DATA REFERENTE"), (df_rub, "DATA REFERENTE"), (df_obr, "Data")]:
         if not df.empty and col in df.columns:
             dates += [df[col].min(), df[col].max()]
-
     dates = [d for d in dates if pd.notna(d)]
 
     if dates:
-        start, end = st.date_input(
-            "Período",
-            value=(min(dates).date(), max(dates).date())
-        )
+        start, end = st.date_input("Período", value=(min(dates).date(), max(dates).date()))
         start = pd.to_datetime(start)
         end = pd.to_datetime(end)
     else:
+        st.info("Não foi possível detectar datas nos dados. Mostrando tudo sem filtro.")
         start = end = None
 
-    def filtro(df, col):
+    def filtro(df: pd.DataFrame, col: str) -> pd.DataFrame:
         if start is None or end is None or df.empty or col not in df.columns:
             return df
         return df[(df[col] >= start) & (df[col] <= end)]
@@ -117,61 +111,112 @@ if uploaded_files:
     df_rub_f = filtro(df_rub, "DATA REFERENTE")
     df_obr_f = filtro(df_obr, "Data")
 
+    # -------------------------
+    # Totais base
+    # -------------------------
+    total_cat = 0.0
+    total_rub = 0.0
+    total_obr = 0.0
+
+    if not df_cat_f.empty and "TOTAL GERAL" in df_cat_f.columns:
+        total_cat = pd.to_numeric(df_cat_f["TOTAL GERAL"], errors="coerce").fillna(0).sum()
+
+    if not df_rub_f.empty and "TOTAL GERAL" in df_rub_f.columns:
+        total_rub = pd.to_numeric(df_rub_f["TOTAL GERAL"], errors="coerce").fillna(0).sum()
+
+    if not df_obr_f.empty and "Rateio" in df_obr_f.columns:
+        df_obr_f = df_obr_f.copy()
+        df_obr_f["Rateio"] = pd.to_numeric(df_obr_f["Rateio"], errors="coerce").fillna(0.0)
+        total_obr = df_obr_f["Rateio"].sum()
+
+    # -------------------------
+    # Reconciliação: Obras bate com Rubricas
+    # -------------------------
+    if total_rub > 0 and total_obr > 0:
+        fator = total_rub / total_obr
+        # só aplica se diferença > 1%
+        if abs(1 - fator) > 0.01:
+            df_obr_f["Rateio"] = df_obr_f["Rateio"] * fator
+            total_obr = df_obr_f["Rateio"].sum()
+            st.caption(f"⚙️ Obras normalizado para bater com Rubricas (fator: {fator:.4f}).")
+
     # KPIs
     c1, c2, c3 = st.columns(3)
+    c1.metric("Total (Categorias)", f"R$ {total_cat:,.2f}" if total_cat else "—")
+    c2.metric("Total (Rubricas)",   f"R$ {total_rub:,.2f}" if total_rub else "—")
+    c3.metric("Total (Obras)",      f"R$ {total_obr:,.2f}" if total_obr else "—")
 
-    c1.metric(
-        "Total (Categorias)",
-        f"R$ {pd.to_numeric(df_cat_f.get('TOTAL GERAL', 0), errors='coerce').sum():,.2f}"
-    )
-    c2.metric(
-        "Total (Rubricas)",
-        f"R$ {pd.to_numeric(df_rub_f.get('TOTAL GERAL', 0), errors='coerce').sum():,.2f}"
-    )
-    c3.metric(
-        "Total (Obras)",
-        f"R$ {pd.to_numeric(df_obr_f.get('Rateio', 0), errors='coerce').sum():,.2f}"
-    )
-
-    # Evolução mensal
+    # -------------------------
+    # Evolução mensal (Rubricas) - eixo limpo
+    # -------------------------
     st.subheader("Evolução mensal (Rubricas)")
-    if not df_rub_f.empty:
+
+    if df_rub_f.empty or "DATA REFERENTE" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
+        st.info("Sem dados suficientes para evolução mensal.")
+    else:
         tmp = df_rub_f.copy()
-        tmp["MES"] = tmp["DATA REFERENTE"].dt.to_period("M").astype(str)
+        tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
         tmp["TOTAL GERAL"] = pd.to_numeric(tmp["TOTAL GERAL"], errors="coerce").fillna(0)
+        tmp = tmp.dropna(subset=["DATA REFERENTE"])
 
-        rub_month = (
-            tmp.groupby("MES", as_index=False)["TOTAL GERAL"]
-               .sum()
-               .sort_values("MES")
-        )
+        if tmp.empty:
+            st.info("Sem datas válidas para evolução mensal.")
+        else:
+            tmp["MES"] = tmp["DATA REFERENTE"].dt.to_period("M").astype(str)
+            rub_month = (
+                tmp.groupby("MES", as_index=False)["TOTAL GERAL"]
+                   .sum()
+                   .sort_values("MES")
+            )
+            # barra é melhor com poucos meses (e sem bug de horas)
+            st.plotly_chart(px.bar(rub_month, x="MES", y="TOTAL GERAL"), use_container_width=True)
 
-        st.plotly_chart(px.bar(rub_month, x="MES", y="TOTAL GERAL"), use_container_width=True)
-
-    # Top obras
+    # -------------------------
+    # Top 10 Obras (já reconciliado se necessário)
+    # -------------------------
     st.subheader("Top 10 Obras")
-    if not df_obr_f.empty:
-        tmpo = df_obr_f.copy()
-        tmpo["Rateio"] = pd.to_numeric(tmpo["Rateio"], errors="coerce").fillna(0)
 
+    if df_obr_f.empty or "Nome Obra" not in df_obr_f.columns or "Rateio" not in df_obr_f.columns:
+        st.info("Sem dados suficientes para Top Obras.")
+    else:
         top_obras = (
-            tmpo.groupby("Nome Obra", as_index=False)["Rateio"]
-                .sum()
-                .sort_values("Rateio", ascending=False)
-                .head(10)
+            df_obr_f.groupby("Nome Obra", as_index=False)["Rateio"]
+                   .sum()
+                   .sort_values("Rateio", ascending=False)
+                   .head(10)
         )
-
         st.plotly_chart(px.bar(top_obras, x="Nome Obra", y="Rateio"), use_container_width=True)
 
+    # -------------------------
+    # Distribuição por Rubrica Modelo
+    # -------------------------
+    st.subheader("Distribuição por Rubrica Modelo")
+
+    if df_rub_f.empty or "Rubrica_Modelo" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
+        st.info("Sem dados suficientes para Rubrica Modelo.")
+    else:
+        tmprm = df_rub_f.copy()
+        tmprm["TOTAL GERAL"] = pd.to_numeric(tmprm["TOTAL GERAL"], errors="coerce").fillna(0)
+        tmprm["Rubrica_Modelo"] = tmprm["Rubrica_Modelo"].fillna("Sem mapeamento")
+
+        rub_model = (
+            tmprm.groupby("Rubrica_Modelo", as_index=False)["TOTAL GERAL"]
+                 .sum()
+                 .sort_values("TOTAL GERAL", ascending=False)
+        )
+        st.plotly_chart(px.bar(rub_model, x="Rubrica_Modelo", y="TOTAL GERAL"), use_container_width=True)
+
+    # -------------------------
     # Tabelas
+    # -------------------------
     st.divider()
-    st.subheader("Categorias")
+    st.subheader("Categorias (filtrado)")
     st.dataframe(df_cat_f)
 
-    st.subheader("Rubricas")
+    st.subheader("Rubricas (filtrado)")
     st.dataframe(df_rub_f)
 
-    st.subheader("Obras")
+    st.subheader("Obras (filtrado e reconciliado)")
     st.dataframe(df_obr_f)
 
 else:
