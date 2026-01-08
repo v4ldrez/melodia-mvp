@@ -2,3 +2,7 @@ streamlit
 pandas
 plotly
 openpyxl
+pdfplumber
+pypdf
+PyPDF2
+PyPDF2
