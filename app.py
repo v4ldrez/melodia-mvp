@@ -6,7 +6,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# Garante que a raiz do app está no PYTHONPATH (Streamlit Cloud às vezes precisa)
+# Garantir que a raiz do app está no PYTHONPATH (Streamlit Cloud às vezes precisa)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
@@ -134,8 +134,7 @@ if uploaded_files:
     # -------------------------
     if total_rub > 0 and total_obr > 0:
         fator = total_rub / total_obr
-        # só aplica se diferença > 1%
-        if abs(1 - fator) > 0.01:
+        if abs(1 - fator) > 0.01:  # só aplica se diferença > 1%
             df_obr_f["Rateio"] = df_obr_f["Rateio"] * fator
             total_obr = df_obr_f["Rateio"].sum()
             st.caption(f"⚙️ Obras normalizado para bater com Rubricas (fator: {fator:.4f}).")
@@ -168,43 +167,185 @@ if uploaded_files:
                    .sum()
                    .sort_values("MES")
             )
-            # barra é melhor com poucos meses (e sem bug de horas)
             st.plotly_chart(px.bar(rub_month, x="MES", y="TOTAL GERAL"), use_container_width=True)
 
-    # -------------------------
-    # Top 10 Obras (já reconciliado se necessário)
-    # -------------------------
-    st.subheader("Top 10 Obras")
+    # =========================================================
+    # NOVAS VISÕES (ABAS)
+    # =========================================================
+    st.divider()
+    st.header("Análises detalhadas")
 
-    if df_obr_f.empty or "Nome Obra" not in df_obr_f.columns or "Rateio" not in df_obr_f.columns:
-        st.info("Sem dados suficientes para Top Obras.")
-    else:
-        top_obras = (
-            df_obr_f.groupby("Nome Obra", as_index=False)["Rateio"]
+    tab1, tab2, tab3 = st.tabs(["Rubricas", "Categorias", "Obras"])
+
+    # =========================
+    # TAB 1 — RUBRICAS
+    # =========================
+    with tab1:
+        st.subheader("Rubricas — Quebras e drilldown")
+
+        if df_rub_f.empty:
+            st.info("Sem dados de rubricas.")
+        else:
+            tmp = df_rub_f.copy()
+            tmp["TOTAL GERAL"] = pd.to_numeric(tmp.get("TOTAL GERAL", 0), errors="coerce").fillna(0)
+
+            if "DATA REFERENTE" in tmp.columns:
+                tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
+                tmp["MES"] = tmp["DATA REFERENTE"].dt.to_period("M").astype(str)
+
+            tmp["Rubrica_Modelo"] = tmp.get("Rubrica_Modelo", pd.Series(["Sem mapeamento"] * len(tmp))).fillna("Sem mapeamento")
+            tmp["RUBRICA"] = tmp.get("RUBRICA", pd.Series(["(Sem nome)"] * len(tmp))).fillna("(Sem nome)")
+
+            colA, colB, colC = st.columns([1.2, 1.2, 1])
+            with colA:
+                modelos = ["(Todos)"] + sorted(tmp["Rubrica_Modelo"].unique().tolist())
+                sel_modelo = st.selectbox("Filtrar por Rubrica Modelo", modelos)
+            with colB:
+                topn = st.slider("Top N", 5, 50, 15, key="rub_topn")
+            with colC:
+                mostrar_percent = st.checkbox("Mostrar %", value=True, key="rub_percent")
+
+            tmp_f = tmp if sel_modelo == "(Todos)" else tmp[tmp["Rubrica_Modelo"] == sel_modelo]
+
+            st.markdown("### Ranking por Rubrica Modelo")
+            by_modelo = (
+                tmp_f.groupby("Rubrica_Modelo", as_index=False)["TOTAL GERAL"]
+                     .sum()
+                     .sort_values("TOTAL GERAL", ascending=False)
+            )
+            if mostrar_percent and total_rub > 0:
+                by_modelo["%"] = (by_modelo["TOTAL GERAL"] / total_rub) * 100
+
+            st.plotly_chart(px.bar(by_modelo.head(topn), x="Rubrica_Modelo", y="TOTAL GERAL"), use_container_width=True)
+            st.dataframe(by_modelo.head(topn), use_container_width=True)
+
+            st.markdown("### Drilldown: Rubricas dentro do Modelo")
+            modelo_drill = st.selectbox("Escolha um modelo para detalhar", options=sorted(tmp_f["Rubrica_Modelo"].unique().tolist()))
+            drill = tmp_f[tmp_f["Rubrica_Modelo"] == modelo_drill]
+            by_rubrica = (
+                drill.groupby("RUBRICA", as_index=False)["TOTAL GERAL"]
+                     .sum()
+                     .sort_values("TOTAL GERAL", ascending=False)
+                     .head(topn)
+            )
+            st.plotly_chart(px.bar(by_rubrica, x="RUBRICA", y="TOTAL GERAL"), use_container_width=True)
+            st.dataframe(by_rubrica, use_container_width=True)
+
+            if "MES" in tmp_f.columns and tmp_f["MES"].nunique() >= 2:
+                st.markdown("### Evolução mensal por Rubrica Modelo")
+                evol = (
+                    tmp_f.groupby(["MES", "Rubrica_Modelo"], as_index=False)["TOTAL GERAL"]
+                         .sum()
+                         .sort_values("MES")
+                )
+                st.plotly_chart(px.line(evol, x="MES", y="TOTAL GERAL", color="Rubrica_Modelo"), use_container_width=True)
+            else:
+                st.caption("Evolução mensal por modelo aparece quando houver 2+ meses.")
+
+    # =========================
+    # TAB 2 — CATEGORIAS
+    # =========================
+    with tab2:
+        st.subheader("Categorias — Distribuição e evolução")
+
+        if df_cat_f.empty:
+            st.info("Sem dados de categorias.")
+        else:
+            tmp = df_cat_f.copy()
+            tmp["TOTAL GERAL"] = pd.to_numeric(tmp.get("TOTAL GERAL", 0), errors="coerce").fillna(0)
+            tmp["CATEGORIA"] = tmp.get("CATEGORIA", pd.Series(["(Sem nome)"] * len(tmp))).fillna("(Sem nome)")
+
+            if "DATA REFERENTE" in tmp.columns:
+                tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
+                tmp["MES"] = tmp["DATA REFERENTE"].dt.to_period("M").astype(str)
+
+            colA, colB = st.columns([1, 1])
+            with colA:
+                topn = st.slider("Top N categorias", 5, 30, 10, key="cat_topn")
+            with colB:
+                modo = st.radio("Visual", ["Barras", "Pizza (share)"], horizontal=True, key="cat_mode")
+
+            by_cat = (
+                tmp.groupby("CATEGORIA", as_index=False)["TOTAL GERAL"]
+                   .sum()
+                   .sort_values("TOTAL GERAL", ascending=False)
+            )
+
+            if modo == "Barras":
+                st.plotly_chart(px.bar(by_cat.head(topn), x="CATEGORIA", y="TOTAL GERAL"), use_container_width=True)
+            else:
+                pie = by_cat.head(min(topn, 12)).copy()
+                st.plotly_chart(px.pie(pie, names="CATEGORIA", values="TOTAL GERAL"), use_container_width=True)
+
+            st.dataframe(by_cat.head(topn), use_container_width=True)
+
+            if "MES" in tmp.columns and tmp["MES"].nunique() >= 2:
+                st.markdown("### Evolução mensal por categoria")
+                evol = (
+                    tmp.groupby(["MES", "CATEGORIA"], as_index=False)["TOTAL GERAL"]
+                       .sum()
+                       .sort_values("MES")
+                )
+                st.plotly_chart(px.line(evol, x="MES", y="TOTAL GERAL", color="CATEGORIA"), use_container_width=True)
+            else:
+                st.caption("Evolução mensal por categoria aparece quando houver 2+ meses.")
+
+    # =========================
+    # TAB 3 — OBRAS
+    # =========================
+    with tab3:
+        st.subheader("Obras — Pareto, top por mês e detalhes")
+
+        if df_obr_f.empty:
+            st.info("Sem dados de obras.")
+        else:
+            tmp = df_obr_f.copy()
+            tmp["Rateio"] = pd.to_numeric(tmp.get("Rateio", 0), errors="coerce").fillna(0.0)
+            tmp["Nome Obra"] = tmp.get("Nome Obra", pd.Series(["(Sem nome)"] * len(tmp))).fillna("(Sem nome)")
+
+            if "Data" in tmp.columns:
+                tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
+                tmp["MES"] = tmp["Data"].dt.to_period("M").astype(str)
+
+            colA, colB = st.columns([1, 1])
+            with colA:
+                topn = st.slider("Top N obras", 5, 50, 15, key="obr_topn")
+            with colB:
+                show_pareto = st.checkbox("Mostrar Pareto", value=True, key="obr_pareto")
+
+            by_obra = (
+                tmp.groupby("Nome Obra", as_index=False)["Rateio"]
                    .sum()
                    .sort_values("Rateio", ascending=False)
-                   .head(10)
-        )
-        st.plotly_chart(px.bar(top_obras, x="Nome Obra", y="Rateio"), use_container_width=True)
+            )
 
-    # -------------------------
-    # Distribuição por Rubrica Modelo
-    # -------------------------
-    st.subheader("Distribuição por Rubrica Modelo")
+            st.plotly_chart(px.bar(by_obra.head(topn), x="Nome Obra", y="Rateio"), use_container_width=True)
+            st.dataframe(by_obra.head(topn), use_container_width=True)
 
-    if df_rub_f.empty or "Rubrica_Modelo" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
-        st.info("Sem dados suficientes para Rubrica Modelo.")
-    else:
-        tmprm = df_rub_f.copy()
-        tmprm["TOTAL GERAL"] = pd.to_numeric(tmprm["TOTAL GERAL"], errors="coerce").fillna(0)
-        tmprm["Rubrica_Modelo"] = tmprm["Rubrica_Modelo"].fillna("Sem mapeamento")
+            if show_pareto and total_obr > 0:
+                pareto = by_obra.copy()
+                pareto["cum"] = pareto["Rateio"].cumsum()
+                pareto["cum_%"] = (pareto["cum"] / total_obr) * 100
+                pareto_show = pareto.head(min(50, len(pareto)))
 
-        rub_model = (
-            tmprm.groupby("Rubrica_Modelo", as_index=False)["TOTAL GERAL"]
-                 .sum()
-                 .sort_values("TOTAL GERAL", ascending=False)
-        )
-        st.plotly_chart(px.bar(rub_model, x="Rubrica_Modelo", y="TOTAL GERAL"), use_container_width=True)
+                st.markdown("### Pareto (concentração de renda)")
+                st.plotly_chart(px.line(pareto_show, x=pareto_show.index, y="cum_%"), use_container_width=True)
+                st.caption(f"Top {topn} obras representam ~{(by_obra.head(topn)['Rateio'].sum()/total_obr*100):.1f}% do total.")
+
+            if "MES" in tmp.columns and tmp["MES"].nunique() >= 2:
+                st.markdown("### Top obras por mês")
+                mes_sel = st.selectbox("Escolha o mês", sorted(tmp["MES"].dropna().unique().tolist()), key="obr_mes_sel")
+                tmp_m = tmp[tmp["MES"] == mes_sel]
+
+                top_mes = (
+                    tmp_m.groupby("Nome Obra", as_index=False)["Rateio"]
+                         .sum()
+                         .sort_values("Rateio", ascending=False)
+                         .head(topn)
+                )
+                st.plotly_chart(px.bar(top_mes, x="Nome Obra", y="Rateio"), use_container_width=True)
+            else:
+                st.caption("Top obras por mês aparece quando houver 2+ meses.")
 
     # -------------------------
     # Tabelas
