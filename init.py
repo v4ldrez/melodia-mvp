@@ -1,1 +1,1 @@
-# ecad_scripts package
+# package marker
