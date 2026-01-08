@@ -1,11 +1,16 @@
 import os
+import sys
 import shutil
 from pathlib import Path
+
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from ecad_scripts.A_process_PDF import run as run_split
 from ecad_scripts.A_CATEGORIAS_3_0 import run as run_categorias
 from ecad_scripts.A_RUBRICAS_3_0 import run as run_rubricas
-from ecad_scripts.A_OBRA_3_0 import run as run_obras
+from ecad_scripts.A_OBRA_3_0 import run as run_obra
 
 
 def process_uploaded_pdf(pdf_path: str, base_dir: str, base_rubricas_path: str):
