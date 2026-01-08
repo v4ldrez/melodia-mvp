@@ -6,10 +6,7 @@ import logging
 
 import pdfplumber
 import pandas as pd
-from openpyxl import load_workbook
-from plyer import notification
 
-# === CONFIGURAÇÃO DE LOG ===
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s: %(message)s",
@@ -18,25 +15,23 @@ logging.basicConfig(
 warnings.filterwarnings("ignore", category=UserWarning, module='pdfminer')
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
-# === CAMINHOS ===
-PASTA_PDFS = r"C:\Users\guilherme.cristo\Documents\ECAD\s_pdf_organizados"
-PASTA_EXCEL = r"C:\Users\guilherme.cristo\Documents\ECAD\s_tabelas\rubricas"
-ARQUIVO_COMPILADO = r"C:\Users\guilherme.cristo\Documents\ECAD\s_tabelas\compiladas\tabela_compilada_rubricas.xlsx"
-BASE_RUBRICAS = r"C:\Users\guilherme.cristo\Documents\ECAD\bs_rubricas\Base_Rubrica_Original.xlsx"
-ARQUIVO_XLSM = r"C:\Users\guilherme.cristo\Documents\ECAD\en_modelo\Modelo_Valuation_vfinal_4.0.xlsm"
-
-# === EXPRESSÕES REGULARES ===
 date_pattern = re.compile(r'\b[A-ZÇ]{3,9}/\d{4}\b')
 numeric_pattern = re.compile(r'^\d{1,3}(?:\.\d{3})*,\d{2}$')
-year_pattern = re.compile(r'^\d{4}$')
+
 
 def extract_data_referente(text):
     match = date_pattern.search(text)
     return match.group(0) if match else None
 
-def process_pdf(pdf_path):
+
+def extract_period(text):
+    match = re.search(r'\b\d{2}/\d{4}(?: A \d{2}/\d{4})?\b', text)
+    return match.group() if match else None
+
+
+def process_pdf(pdf_path: str, pasta_excel: str):
     filename = os.path.basename(pdf_path)
-    logging.info(f"🔍 Iniciando processamento de: {filename}")
+    logging.info(f"🔍 Processando rubricas: {filename}")
 
     start_page = end_page = None
     data_referente = None
@@ -57,7 +52,7 @@ def process_pdf(pdf_path):
                 break
 
     if start_page is None or end_page is None:
-        logging.error(f"❌ Tabela não encontrada em: {filename}")
+        logging.error(f"❌ Tabela POR RUBRICA não encontrada em: {filename}")
         return
 
     segments = []
@@ -84,7 +79,7 @@ def process_pdf(pdf_path):
     for line in combined:
         if line.startswith("EXEC. - NÚM. DE EXECUÇÕES"):
             exclude = True
-        if line.startswith("OBRA RUBRICA PERÍODO RENDIMENTO % RATEIO CORREÇÃO EXEC (OC"):
+        if line.startswith("OBRA RUBRICA PERÍODO RENDIMENTO % RATEIO CORREÇÃO EXEC (OC)"):
             exclude = False
             continue
         if exclude or not line.strip() or line.startswith(("POR RUBRICA", "TOTAL")):
@@ -100,6 +95,7 @@ def process_pdf(pdf_path):
                 rubrica_parts.append(part)
 
         rubrica_name = " ".join(rubrica_parts)
+
         while len(valores) < len(header) - 2:
             valores.insert(0, "---")
         valores.append(data_referente)
@@ -107,13 +103,10 @@ def process_pdf(pdf_path):
 
     df = pd.DataFrame(data, columns=header)
     nome_arquivo = f"tabela_extraida_{os.path.splitext(filename)[0]}.xlsx"
-    caminho_excel = os.path.join(PASTA_EXCEL, nome_arquivo)
+    caminho_excel = os.path.join(pasta_excel, nome_arquivo)
     df.to_excel(caminho_excel, index=False)
     logging.info(f"✅ Exportado para: {caminho_excel}")
 
-def extract_period(text):
-    match = re.search(r'\b\d{2}/\d{4}(?: A \d{2}/\d{4})?\b', text)
-    return match.group() if match else None
 
 def formatar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     colunas_numericas = [
@@ -125,30 +118,25 @@ def formatar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "TOTAL GERAL"
     ]
 
-    # Função robusta para tratar todos os formatos numéricos
     def limpar_valor(val):
         if pd.isna(val) or str(val).strip() == '---':
             return 0.0
         val = str(val).strip()
-        # Se já estiver com ponto decimal e sem vírgula
         if '.' in val and ',' not in val:
             try:
                 return float(val)
             except ValueError:
                 return 0.0
-        # Caso contrário, aplica lógica para formato brasileiro
         val = val.replace('.', '').replace(',', '.')
         try:
             return float(val)
         except ValueError:
             return 0.0
 
-    # Aplicar a limpeza para cada coluna numérica
     for col in colunas_numericas:
         if col in df.columns:
             df[col] = df[col].apply(limpar_valor)
 
-    # Converter DATA REFERENTE → datetime (01/mm/aaaa)
     if "DATA REFERENTE" in df.columns:
         def converter_data(texto):
             meses = {
@@ -167,71 +155,55 @@ def formatar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
         df["DATA REFERENTE"] = df["DATA REFERENTE"].apply(converter_data)
 
-    # Garantir que Período e Rubrica_Modelo sejam texto
     for col in ["Período", "Rubrica_Modelo"]:
         if col in df.columns:
             df[col] = df[col].astype(str)
 
     return df
 
-def main():
+
+def run(base_dir: str, base_rubricas_path: str):
     inicio = time.time()
 
-    # 1. PROCESSAR PDFs
-    for arquivo in os.listdir(PASTA_PDFS):
-        if arquivo.lower().endswith(".pdf"):
-            process_pdf(os.path.join(PASTA_PDFS, arquivo))
+    pasta_pdfs = os.path.join(base_dir, "s_pdf_organizados")
+    pasta_excel = os.path.join(base_dir, "s_tabelas", "rubricas")
+    arquivo_compilado = os.path.join(base_dir, "s_tabelas", "compiladas", "tabela_compilada_rubricas.xlsx")
 
-    # 2. COMPILAR OS EXCELS EXTRAÍDOS
-    excels = [f for f in os.listdir(PASTA_EXCEL) if f.lower().endswith(".xlsx")]
-    dfs = [pd.read_excel(os.path.join(PASTA_EXCEL, f)) for f in excels]
+    os.makedirs(pasta_excel, exist_ok=True)
+    os.makedirs(os.path.dirname(arquivo_compilado), exist_ok=True)
+
+    for arquivo in os.listdir(pasta_pdfs):
+        if arquivo.lower().endswith(".pdf"):
+            process_pdf(os.path.join(pasta_pdfs, arquivo), pasta_excel)
+
+    excels = [f for f in os.listdir(pasta_excel) if f.lower().endswith(".xlsx")]
+    if not excels:
+        logging.warning("⚠️ Nenhum excel extraído de rubricas.")
+        return pd.DataFrame(), arquivo_compilado
+
+    dfs = [pd.read_excel(os.path.join(pasta_excel, f)) for f in excels]
     df_compilado = pd.concat(dfs, ignore_index=True)
     df_compilado = df_compilado[df_compilado['TOTAL GERAL'] != '---']
+
     df_compilado['Período'] = df_compilado['RUBRICA'].apply(extract_period)
     df_compilado['RUBRICA'] = df_compilado['RUBRICA'].str.replace(
         r'\b\d{2}/\d{4}(?: A \d{2}/\d{4})?\b', '', regex=True
     ).str.strip()
 
-    # 3. ADICIONAR RUBRICA MODELO
-    base_rubricas = pd.read_excel(BASE_RUBRICAS, sheet_name=0)
+    base_rubricas = pd.read_excel(base_rubricas_path, sheet_name=0)
     mapa = base_rubricas.set_index('Descrição')['Rubrica MODELO'].to_dict()
     df_compilado['Rubrica_Modelo'] = df_compilado['RUBRICA'].map(mapa)
 
-    # 3.1 AJUSTAR FORMATOS PARA EXCEL
     df_compilado = formatar_dataframe(df_compilado)
 
-    # 4. SALVAR COMPILADO FINAL
-    df_compilado.to_excel(ARQUIVO_COMPILADO, index=False)
-    logging.info(f"📁 Arquivo compilado salvo em: {ARQUIVO_COMPILADO}")
+    df_compilado.to_excel(arquivo_compilado, index=False)
+    logging.info(f"📁 Compilado rubricas salvo em: {arquivo_compilado}")
 
-    # 5. INSERIR DADOS NO XLSM
-    while True:
-        try:
-            with open(ARQUIVO_XLSM, 'rb'):
-                break
-        except PermissionError:
-            logging.warning("⚠️ Arquivo XLSM em uso, aguardando liberação...")
-            time.sleep(1)
-
-    wb = load_workbook(ARQUIVO_XLSM, keep_vba=True)
-    ws = wb["bs_ECAD_Rubrica"]
-    for col_idx, col_name in enumerate(df_compilado.columns, start=1):
-        ws.cell(row=1, column=col_idx, value=col_name)
-    for row_idx, row in enumerate(df_compilado.itertuples(index=False, name=None), start=2):
-        for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
-    wb.save(ARQUIVO_XLSM)
-    logging.info(f"📥 Dados inseridos na planilha XLSM: {ARQUIVO_XLSM}")
-
-    # 6. NOTIFICAÇÃO E LOG DE CONCLUSÃO
     duracao = time.time() - inicio
-    logging.info(f"⏱️ Tempo total de execução: {duracao:.2f} segundos.")
+    logging.info(f"⏱️ Rubricas finalizado em: {duracao:.2f} s")
+    return df_compilado, arquivo_compilado
 
-    notification.notify(
-        title='PROCESSAMENTO DE RUBRICAS',
-        message='Processamento finalizado!',
-        timeout=10
-    )
 
 if __name__ == "__main__":
-    main()
+    # Para teste local
+    run(os.getcwd(), base_rubricas_path=os.path.join("bases", "Base_Rubrica_Original.xlsx"))
