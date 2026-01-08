@@ -1,10 +1,18 @@
-# ecad_scripts/obras.py  (substitua este arquivo)
+import os
 import re
+import time
 import logging
+import warnings
+
 import pandas as pd
 from pypdf import PdfReader
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # Aceita SOMENTE dinheiro BR: 1.234,56  ou 12,34  ou 123,45
 MONEY_BR = re.compile(r"^\d{1,3}(?:\.\d{3})*,\d{2}$")
@@ -36,31 +44,14 @@ def _data_referente_to_dt(dr: str):
                 return pd.to_datetime(f"01/{num_mes}/{ano.group(0)}", dayfirst=True, errors="coerce")
     return pd.NaT
 
-def _extract_total_geral_from_pdf_text(lines):
-    """
-    O seu código antigo captura o TOTAL GERAL lendo a linha seguinte.
-    Mantive essa lógica, mas mais defensiva.
-    """
-    capture_next = False
-    for line in lines:
-        if capture_next:
-            m = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2})", line)
-            if m:
-                return _br_money_to_float(m.group(1))
-            capture_next = False
-        if "TOTAL GERAL" in (line or ""):
-            capture_next = True
-    return None
-
-def parse_obras_from_pdf_bytes(pdf_bytes: bytes):
-    reader = PdfReader(pdf_bytes)
+def parse_obras_from_pdf_path(pdf_path: str):
+    reader = PdfReader(pdf_path)
     full_text = ""
     for p in reader.pages:
         full_text += (p.extract_text() or "") + "\n"
 
     data_referente = _extract_data_referente(full_text)
     lines = full_text.splitlines()
-    total_pdf = _extract_total_geral_from_pdf_text(lines)
 
     rows = []
     collecting = False
@@ -69,21 +60,18 @@ def parse_obras_from_pdf_bytes(pdf_bytes: bytes):
         if not line:
             continue
 
-        # seu gatilho original
         if "OBRA" in line:
             collecting = True
 
         if not collecting:
             continue
 
-        # Linhas de obra normalmente começam com código numérico
         if not re.match(r"^\d{2,}\s", line.strip()):
             continue
 
         parts = line.split()
         codigo = parts[0]
 
-        # achar o ÚLTIMO token monetário da linha (evita confundir com códigos)
         money_tokens = [p for p in parts if MONEY_BR.match(p)]
         if not money_tokens:
             continue
@@ -94,32 +82,51 @@ def parse_obras_from_pdf_bytes(pdf_bytes: bytes):
         except Exception:
             continue
 
-        # Nome: entre o código e o primeiro token monetário encontrado
         first_money_idx = next(i for i, p in enumerate(parts) if MONEY_BR.match(p))
         nome = " ".join(parts[1:first_money_idx]).strip()
         if not nome:
             continue
 
-        rows.append([codigo, nome, rateio, data_referente])
+        rows.append([os.path.basename(pdf_path), codigo, nome, rateio, data_referente])
 
-    df = pd.DataFrame(rows, columns=["Código ECAD", "Nome Obra", "Rateio", "DATA REFERENTE"])
+    df = pd.DataFrame(rows, columns=["Nome Arquivo", "Código ECAD", "Nome Obra", "Rateio", "Data"])
+    if df.empty:
+        return df
+
     df["Código ECAD"] = pd.to_numeric(df["Código ECAD"], errors="coerce")
-    df["DATA REFERENTE"] = df["DATA REFERENTE"].apply(_data_referente_to_dt)
+    df["Rateio"] = pd.to_numeric(df["Rateio"], errors="coerce").fillna(0.0)
+    df["Data"] = df["Data"].apply(_data_referente_to_dt)
 
-    total_calc = float(df["Rateio"].sum()) if not df.empty else 0.0
-    return df, total_calc, total_pdf
-
-def run(pdf_bytes: bytes):
-    """
-    Interface simples pro seu pipeline:
-    retorna df_obras e também total calculado e total do PDF.
-    """
-    df, total_calc, total_pdf = parse_obras_from_pdf_bytes(pdf_bytes)
-
-    # sanity check
-    if total_pdf is not None and abs(total_calc - total_pdf) > 0.50:
-        logger.warning(
-            f"[OBRAS] Diferença detectada. Calculado={total_calc:.2f} vs PDF={total_pdf:.2f}"
-        )
+    # cinto de segurança: evita valores absurdos por falha de parsing
+    df = df[df["Rateio"].between(0, 1_000_000)]
 
     return df
+
+def run(base_dir: str):
+    """
+    Lê PDFs já separados em:
+      {base_dir}/s_pdf_organizados
+    Retorna (df, caminho_compilado)
+    """
+    start = time.time()
+
+    pdf_dir = os.path.join(base_dir, "s_pdf_organizados")
+    comp_dir = os.path.join(base_dir, "s_tabelas", "compiladas")
+    os.makedirs(comp_dir, exist_ok=True)
+
+    dfs = []
+    for fname in os.listdir(pdf_dir):
+        if fname.lower().endswith(".pdf"):
+            path = os.path.join(pdf_dir, fname)
+            dfs.append(parse_obras_from_pdf_path(path))
+
+    if not dfs:
+        logger.warning("Nenhum PDF encontrado em s_pdf_organizados para obras.")
+        return pd.DataFrame(), os.path.join(comp_dir, "tabela_compilada_Obras.xlsx")
+
+    df = pd.concat([d for d in dfs if d is not None and not d.empty], ignore_index=True)
+    out_path = os.path.join(comp_dir, "tabela_compilada_Obras.xlsx")
+    df.to_excel(out_path, index=False)
+
+    logger.info("Obras finalizado em %.2f s", time.time() - start)
+    return df, out_path
