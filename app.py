@@ -39,7 +39,7 @@ if uploaded_files:
         for i, uploaded in enumerate(uploaded_files, start=1):
             status.update(label=f"Processando {uploaded.name} ({i}/{len(uploaded_files)})")
 
-            # pasta isolada por PDF (evita que um PDF contamine o outro)
+            # Pasta isolada por PDF (evita mistura)
             pdf_dir = os.path.join(base_run_dir, f"{i:03d}_{uploaded.name.replace('.pdf','')}")
             os.makedirs(pdf_dir, exist_ok=True)
 
@@ -56,10 +56,8 @@ if uploaded_files:
 
                 if isinstance(df_cat, pd.DataFrame) and not df_cat.empty:
                     dfs_cat.append(df_cat)
-
                 if isinstance(df_rub, pd.DataFrame) and not df_rub.empty:
                     dfs_rub.append(df_rub)
-
                 if isinstance(df_obr, pd.DataFrame) and not df_obr.empty:
                     dfs_obr.append(df_obr)
 
@@ -69,25 +67,23 @@ if uploaded_files:
 
         status.update(label="Processamento concluído!", state="complete")
 
-    # Concatenar tudo
+    # Consolidar
     df_cat = pd.concat(dfs_cat, ignore_index=True) if dfs_cat else pd.DataFrame()
     df_rub = pd.concat(dfs_rub, ignore_index=True) if dfs_rub else pd.DataFrame()
     df_obr = pd.concat(dfs_obr, ignore_index=True) if dfs_obr else pd.DataFrame()
 
-    # Normalizações de data
+    # Normalizar datas
     if "DATA REFERENTE" in df_cat.columns:
         df_cat["DATA REFERENTE"] = pd.to_datetime(df_cat["DATA REFERENTE"], errors="coerce")
-
     if "DATA REFERENTE" in df_rub.columns:
         df_rub["DATA REFERENTE"] = pd.to_datetime(df_rub["DATA REFERENTE"], errors="coerce")
-
     if "Data" in df_obr.columns:
         df_obr["Data"] = pd.to_datetime(df_obr["Data"], errors="coerce")
 
     st.divider()
     st.header("Dashboards")
 
-    # Range global de datas
+    # Range global para filtro
     dates = []
     for df, col in [(df_cat, "DATA REFERENTE"), (df_rub, "DATA REFERENTE"), (df_obr, "Data")]:
         if not df.empty and col in df.columns:
@@ -111,9 +107,7 @@ if uploaded_files:
     df_rub_f = filtro(df_rub, "DATA REFERENTE")
     df_obr_f = filtro(df_obr, "Data")
 
-    # -------------------------
-    # Totais base
-    # -------------------------
+    # Totais
     total_cat = 0.0
     total_rub = 0.0
     total_obr = 0.0
@@ -129,12 +123,10 @@ if uploaded_files:
         df_obr_f["Rateio"] = pd.to_numeric(df_obr_f["Rateio"], errors="coerce").fillna(0.0)
         total_obr = df_obr_f["Rateio"].sum()
 
-    # -------------------------
-    # Reconciliação: Obras bate com Rubricas
-    # -------------------------
+    # Reconciliação: Obras bate com Rubricas (MVP)
     if total_rub > 0 and total_obr > 0:
         fator = total_rub / total_obr
-        if abs(1 - fator) > 0.01:  # só aplica se diferença > 1%
+        if abs(1 - fator) > 0.01:
             df_obr_f["Rateio"] = df_obr_f["Rateio"] * fator
             total_obr = df_obr_f["Rateio"].sum()
             st.caption(f"⚙️ Obras normalizado para bater com Rubricas (fator: {fator:.4f}).")
@@ -145,11 +137,8 @@ if uploaded_files:
     c2.metric("Total (Rubricas)",   f"R$ {total_rub:,.2f}" if total_rub else "—")
     c3.metric("Total (Obras)",      f"R$ {total_obr:,.2f}" if total_obr else "—")
 
-    # -------------------------
-    # Evolução mensal (Rubricas) - eixo limpo
-    # -------------------------
+    # Evolução mensal (Rubricas)
     st.subheader("Evolução mensal (Rubricas)")
-
     if df_rub_f.empty or "DATA REFERENTE" not in df_rub_f.columns or "TOTAL GERAL" not in df_rub_f.columns:
         st.info("Sem dados suficientes para evolução mensal.")
     else:
@@ -157,7 +146,6 @@ if uploaded_files:
         tmp["DATA REFERENTE"] = pd.to_datetime(tmp["DATA REFERENTE"], errors="coerce")
         tmp["TOTAL GERAL"] = pd.to_numeric(tmp["TOTAL GERAL"], errors="coerce").fillna(0)
         tmp = tmp.dropna(subset=["DATA REFERENTE"])
-
         if tmp.empty:
             st.info("Sem datas válidas para evolução mensal.")
         else:
@@ -170,18 +158,17 @@ if uploaded_files:
             st.plotly_chart(px.bar(rub_month, x="MES", y="TOTAL GERAL"), use_container_width=True)
 
     # =========================================================
-    # NOVAS VISÕES (ABAS)
+    # ABAS DETALHADAS
     # =========================================================
     st.divider()
     st.header("Análises detalhadas")
-
     tab1, tab2, tab3 = st.tabs(["Rubricas", "Categorias", "Obras"])
 
-    # =========================
+    # -------------------------
     # TAB 1 — RUBRICAS
-    # =========================
+    # -------------------------
     with tab1:
-        st.subheader("Rubricas — Quebras e drilldown")
+        st.subheader("Rubricas — Ranking e drilldown")
 
         if df_rub_f.empty:
             st.info("Sem dados de rubricas.")
@@ -199,7 +186,7 @@ if uploaded_files:
             colA, colB, colC = st.columns([1.2, 1.2, 1])
             with colA:
                 modelos = ["(Todos)"] + sorted(tmp["Rubrica_Modelo"].unique().tolist())
-                sel_modelo = st.selectbox("Filtrar por Rubrica Modelo", modelos)
+                sel_modelo = st.selectbox("Filtrar por Rubrica Modelo", modelos, key="rub_sel_modelo")
             with colB:
                 topn = st.slider("Top N", 5, 50, 15, key="rub_topn")
             with colC:
@@ -220,7 +207,11 @@ if uploaded_files:
             st.dataframe(by_modelo.head(topn), use_container_width=True)
 
             st.markdown("### Drilldown: Rubricas dentro do Modelo")
-            modelo_drill = st.selectbox("Escolha um modelo para detalhar", options=sorted(tmp_f["Rubrica_Modelo"].unique().tolist()))
+            modelo_drill = st.selectbox(
+                "Escolha um modelo para detalhar",
+                options=sorted(tmp_f["Rubrica_Modelo"].unique().tolist()),
+                key="rub_drill_modelo"
+            )
             drill = tmp_f[tmp_f["Rubrica_Modelo"] == modelo_drill]
             by_rubrica = (
                 drill.groupby("RUBRICA", as_index=False)["TOTAL GERAL"]
@@ -242,9 +233,9 @@ if uploaded_files:
             else:
                 st.caption("Evolução mensal por modelo aparece quando houver 2+ meses.")
 
-    # =========================
+    # -------------------------
     # TAB 2 — CATEGORIAS
-    # =========================
+    # -------------------------
     with tab2:
         st.subheader("Categorias — Distribuição e evolução")
 
@@ -290,62 +281,64 @@ if uploaded_files:
             else:
                 st.caption("Evolução mensal por categoria aparece quando houver 2+ meses.")
 
-    # =========================
+    # -------------------------
     # TAB 3 — OBRAS
-    # =========================
+    # -------------------------
     with tab3:
-        st.subheader("Obras — Pareto, top por mês e detalhes")
+        st.subheader("Obras — Ranking e evolução mês a mês por obra")
 
-        if df_obr_f.empty:
-            st.info("Sem dados de obras.")
+        if df_obr_f.empty or "Nome Obra" not in df_obr_f.columns or "Rateio" not in df_obr_f.columns:
+            st.info("Sem dados suficientes de obras.")
         else:
             tmp = df_obr_f.copy()
-            tmp["Rateio"] = pd.to_numeric(tmp.get("Rateio", 0), errors="coerce").fillna(0.0)
-            tmp["Nome Obra"] = tmp.get("Nome Obra", pd.Series(["(Sem nome)"] * len(tmp))).fillna("(Sem nome)")
+            tmp["Rateio"] = pd.to_numeric(tmp["Rateio"], errors="coerce").fillna(0.0)
+            tmp["Nome Obra"] = tmp["Nome Obra"].fillna("(Sem nome)")
 
+            # Eixo mensal (precisa de Data)
             if "Data" in tmp.columns:
                 tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
+                tmp = tmp.dropna(subset=["Data"])
                 tmp["MES"] = tmp["Data"].dt.to_period("M").astype(str)
+            else:
+                tmp["MES"] = "(Sem mês)"
 
-            colA, colB = st.columns([1, 1])
+            colA, colB = st.columns([1.2, 1])
             with colA:
-                topn = st.slider("Top N obras", 5, 50, 15, key="obr_topn")
+                # filtro por obra
+                obras = sorted(tmp["Nome Obra"].unique().tolist())
+                obra_sel = st.selectbox("Selecione uma obra", obras, key="obra_sel")
             with colB:
-                show_pareto = st.checkbox("Mostrar Pareto", value=True, key="obr_pareto")
+                topn = st.slider("Top N (ranking)", 5, 50, 15, key="obr_topn")
 
+            # 1) Ranking geral de obras
+            st.markdown("### Ranking geral de obras")
             by_obra = (
                 tmp.groupby("Nome Obra", as_index=False)["Rateio"]
                    .sum()
                    .sort_values("Rateio", ascending=False)
+                   .head(topn)
             )
+            st.plotly_chart(px.bar(by_obra, x="Nome Obra", y="Rateio"), use_container_width=True)
+            st.dataframe(by_obra, use_container_width=True)
 
-            st.plotly_chart(px.bar(by_obra.head(topn), x="Nome Obra", y="Rateio"), use_container_width=True)
-            st.dataframe(by_obra.head(topn), use_container_width=True)
+            # 2) Evolução mensal da obra selecionada
+            st.markdown("### Evolução mensal da obra selecionada")
+            serie = tmp[tmp["Nome Obra"] == obra_sel].copy()
 
-            if show_pareto and total_obr > 0:
-                pareto = by_obra.copy()
-                pareto["cum"] = pareto["Rateio"].cumsum()
-                pareto["cum_%"] = (pareto["cum"] / total_obr) * 100
-                pareto_show = pareto.head(min(50, len(pareto)))
-
-                st.markdown("### Pareto (concentração de renda)")
-                st.plotly_chart(px.line(pareto_show, x=pareto_show.index, y="cum_%"), use_container_width=True)
-                st.caption(f"Top {topn} obras representam ~{(by_obra.head(topn)['Rateio'].sum()/total_obr*100):.1f}% do total.")
-
-            if "MES" in tmp.columns and tmp["MES"].nunique() >= 2:
-                st.markdown("### Top obras por mês")
-                mes_sel = st.selectbox("Escolha o mês", sorted(tmp["MES"].dropna().unique().tolist()), key="obr_mes_sel")
-                tmp_m = tmp[tmp["MES"] == mes_sel]
-
-                top_mes = (
-                    tmp_m.groupby("Nome Obra", as_index=False)["Rateio"]
-                         .sum()
-                         .sort_values("Rateio", ascending=False)
-                         .head(topn)
-                )
-                st.plotly_chart(px.bar(top_mes, x="Nome Obra", y="Rateio"), use_container_width=True)
+            if serie.empty:
+                st.info("Sem dados para essa obra no período filtrado.")
             else:
-                st.caption("Top obras por mês aparece quando houver 2+ meses.")
+                obra_month = (
+                    serie.groupby("MES", as_index=False)["Rateio"]
+                         .sum()
+                         .sort_values("MES")
+                )
+
+                st.plotly_chart(
+                    px.line(obra_month, x="MES", y="Rateio", markers=True),
+                    use_container_width=True
+                )
+                st.dataframe(obra_month, use_container_width=True)
 
     # -------------------------
     # Tabelas
