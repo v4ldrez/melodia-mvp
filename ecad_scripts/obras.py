@@ -1,8 +1,8 @@
 import os
 import re
 import time
-import warnings
 import logging
+import warnings
 
 import PyPDF2
 import pandas as pd
@@ -10,15 +10,15 @@ from openpyxl import Workbook
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
+    format="%(asctime)s %(levelname)s: %(message)s"
 )
-warnings.filterwarnings("ignore", category=UserWarning, module='pdfminer')
+
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def extract_text_from_pdf(pdf_path):
     text = ""
-    with open(pdf_path, 'rb') as f:
+    with open(pdf_path, "rb") as f:
         reader = PyPDF2.PdfReader(f)
         for page in reader.pages:
             text += page.extract_text() or ""
@@ -26,96 +26,105 @@ def extract_text_from_pdf(pdf_path):
 
 
 def extract_data_referente(text):
-    m = re.search(r'\b[A-ZÇ]{3,9}/\d{4}\b', text)
+    m = re.search(r"\b[A-ZÇ]{3,9}/\d{4}\b", text)
     return m.group(0) if m else None
 
 
 def process_text(text):
     data = []
-    lines = text.split('\n')
+    lines = text.split("\n")
     collect = False
     total_from_pdf = 0.0
     capture_next_line = False
     data_referente = extract_data_referente(text)
 
     for line in lines:
-        if 'OBRA' in line:
+        if "OBRA" in line:
             collect = True
 
         if capture_next_line:
-            m = re.search(r'([\d.,]+)', line)
+            m = re.search(r"([\d.,]+)", line)
             if m:
-                s = m.group(1).replace('.', '').replace(',', '.')
-                if s.count('.') > 1:
-                    parts = s.split('.')
-                    s = ''.join(parts[:-1]) + '.' + parts[-1]
+                s = m.group(1).replace(".", "").replace(",", ".")
                 try:
                     total_from_pdf = float(s)
                 except ValueError:
-                    logging.error(f"Erro ao converter '{s}' em float.")
-                capture_next_line = False
+                    pass
+            capture_next_line = False
 
-        if 'TOTAL GERAL' in line:
+        if "TOTAL GERAL" in line:
             capture_next_line = True
 
-        if collect and re.match(r'^\d{2,}', line):
+        if collect and re.match(r"^\d{2,}", line):
             parts = line.split()
             codigo = parts[0]
             try:
-                idx = next(i for i, p in enumerate(parts) if re.match(r'^\d{1,3}(?:\.\d{3})*,\d{2}|\d{9}$', p))
-                nome = ' '.join(parts[1:idx])
-                if nome:
-                    rateio_raw = parts[idx]
-                    rateio_tratado = rateio_raw.replace('.', '').replace(',', '.')
-                    try:
-                        rateio_float = float(rateio_tratado)
-                        data.append([codigo, nome, rateio_float, data_referente])
-                    except ValueError:
-                        logging.warning(f"🔴 Linha ignorada: rateio inválido '{rateio_raw}'. Linha: '{line}'")
-                        continue
-            except StopIteration:
+                idx = next(
+                    i for i, p in enumerate(parts)
+                    if re.match(r"^\d{1,3}(?:\.\d{3})*,\d{2}|\d{9}$", p)
+                )
+                nome = " ".join(parts[1:idx])
+                rateio_raw = parts[idx]
+                rateio = float(rateio_raw.replace(".", "").replace(",", "."))
+                data.append([codigo, nome, rateio, data_referente])
+            except Exception:
                 continue
 
     return data, total_from_pdf
 
 
-def save_to_excel(data, output_path, pdf_filename):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Dados ECAD"
-    ws.append(['Nome Arquivo', 'Código ECAD', 'Nome Obra', 'Rateio', 'Data'])
+def run(base_dir: str):
+    start = time.time()
 
-    total_rateio = 0.0
-    for row in data:
-        ws.append([pdf_filename] + row)
-        total_rateio += row[2]
+    pdf_dir = os.path.join(base_dir, "s_pdf_organizados")
+    out_dir = os.path.join(base_dir, "s_tabelas", "obras")
+    comp_dir = os.path.join(base_dir, "s_tabelas", "compiladas")
 
-    wb.save(output_path)
-    return total_rateio
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(comp_dir, exist_ok=True)
 
+    all_rows = []
 
-def formatar_dataframe_obras(df: pd.DataFrame) -> pd.DataFrame:
-    df["Nome Arquivo"] = df["Nome Arquivo"].astype(str)
-    df["Nome Obra"] = df["Nome Obra"].astype(str)
-    df["Código ECAD"] = pd.to_numeric(df["Código ECAD"], errors="coerce").fillna(0).astype(int)
+    for fname in os.listdir(pdf_dir):
+        if not fname.lower().endswith(".pdf"):
+            continue
 
-    def limpar_valor_rateio(val):
-        if pd.isna(val) or str(val).strip() == '---':
-            return 0.0
-        val = str(val).strip()
-        if '.' in val and ',' not in val:
-            try:
-                return float(val)
-            except ValueError:
-                return 0.0
-        val = val.replace('.', '').replace(',', '.')
-        try:
-            return float(val)
-        except ValueError:
-            return 0.0
+        pdf_path = os.path.join(pdf_dir, fname)
+        text = extract_text_from_pdf(pdf_path)
+        rows, _ = process_text(text)
 
-    df["Rateio"] = df["Rateio"].apply(limpar_valor_rateio)
+        for r in rows:
+            all_rows.append([fname] + r)
 
-    def converter_data(texto):
+    if not all_rows:
+        return pd.DataFrame(), None
+
+    df = pd.DataFrame(
+        all_rows,
+        columns=["Nome Arquivo", "Codigo ECAD", "Nome Obra", "Rateio", "Data"]
+    )
+
+    df["Rateio"] = pd.to_numeric(df["Rateio"], errors="coerce").fillna(0)
+
+    def conv_data(txt):
         meses = {
-            "JANEIRO": "01", "FEVEREI
+            "JANEIRO": "01", "FEVEREIRO": "02", "MARCO": "03", "ABRIL": "04",
+            "MAIO": "05", "JUNHO": "06", "JULHO": "07", "AGOSTO": "08",
+            "SETEMBRO": "09", "OUTUBRO": "10", "NOVEMBRO": "11", "DEZEMBRO": "12"
+        }
+        if isinstance(txt, str):
+            txt = txt.upper().replace("Ç", "C")
+            for m, n in meses.items():
+                if m in txt:
+                    ano = re.search(r"\d{4}", txt)
+                    if ano:
+                        return pd.to_datetime(f"01/{n}/{ano.group(0)}", dayfirst=True)
+        return pd.NaT
+
+    df["Data"] = df["Data"].apply(conv_data)
+
+    out_path = os.path.join(comp_dir, "tabela_compilada_Obras.xlsx")
+    df.to_excel(out_path, index=False)
+
+    logging.info("Obras processadas em %.2f s", time.time() - start)
+    return df, out_path
