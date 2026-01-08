@@ -285,7 +285,7 @@ if uploaded_files:
     # TAB 3 — OBRAS
     # -------------------------
     with tab3:
-        st.subheader("Obras — Ranking e evolução mês a mês por obra")
+        st.subheader("Obras — Ranking e evolução mês a mês (comparação)")
 
         if df_obr_f.empty or "Nome Obra" not in df_obr_f.columns or "Rateio" not in df_obr_f.columns:
             st.info("Sem dados suficientes de obras.")
@@ -294,7 +294,7 @@ if uploaded_files:
             tmp["Rateio"] = pd.to_numeric(tmp["Rateio"], errors="coerce").fillna(0.0)
             tmp["Nome Obra"] = tmp["Nome Obra"].fillna("(Sem nome)")
 
-            # Eixo mensal (precisa de Data)
+            # Eixo mensal
             if "Data" in tmp.columns:
                 tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
                 tmp = tmp.dropna(subset=["Data"])
@@ -304,13 +304,27 @@ if uploaded_files:
 
             colA, colB = st.columns([1.2, 1])
             with colA:
-                # filtro por obra
                 obras = sorted(tmp["Nome Obra"].unique().tolist())
-                obra_sel = st.selectbox("Selecione uma obra", obras, key="obra_sel")
+
+                # sugestão automática: top 5 por padrão
+                sugestao = (
+                    tmp.groupby("Nome Obra", as_index=False)["Rateio"]
+                       .sum()
+                       .sort_values("Rateio", ascending=False)
+                       .head(5)["Nome Obra"]
+                       .tolist()
+                )
+
+                obras_sel = st.multiselect(
+                    "Selecione uma ou mais obras para comparar",
+                    options=obras,
+                    default=sugestao
+                )
+
             with colB:
                 topn = st.slider("Top N (ranking)", 5, 50, 15, key="obr_topn")
 
-            # 1) Ranking geral de obras
+            # 1) Ranking geral
             st.markdown("### Ranking geral de obras")
             by_obra = (
                 tmp.groupby("Nome Obra", as_index=False)["Rateio"]
@@ -321,21 +335,22 @@ if uploaded_files:
             st.plotly_chart(px.bar(by_obra, x="Nome Obra", y="Rateio"), use_container_width=True)
             st.dataframe(by_obra, use_container_width=True)
 
-            # 2) Evolução mensal da obra selecionada
-            st.markdown("### Evolução mensal da obra selecionada")
-            serie = tmp[tmp["Nome Obra"] == obra_sel].copy()
+            # 2) Evolução mensal das obras selecionadas
+            st.markdown("### Evolução mensal (obras selecionadas)")
 
-            if serie.empty:
-                st.info("Sem dados para essa obra no período filtrado.")
+            if not obras_sel:
+                st.info("Selecione pelo menos 1 obra para ver a evolução mensal.")
             else:
+                serie = tmp[tmp["Nome Obra"].isin(obras_sel)].copy()
+
                 obra_month = (
-                    serie.groupby("MES", as_index=False)["Rateio"]
+                    serie.groupby(["MES", "Nome Obra"], as_index=False)["Rateio"]
                          .sum()
                          .sort_values("MES")
                 )
 
                 st.plotly_chart(
-                    px.line(obra_month, x="MES", y="Rateio", markers=True),
+                    px.line(obra_month, x="MES", y="Rateio", color="Nome Obra", markers=True),
                     use_container_width=True
                 )
                 st.dataframe(obra_month, use_container_width=True)
