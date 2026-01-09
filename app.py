@@ -20,68 +20,90 @@ st.set_page_config(page_title="Melodia Finance", layout="wide")
 
 
 # -----------------------------
-# Estilo (layout)
+# Styling (Dark + Hurst Yellow)
 # -----------------------------
+HURST_YELLOW = "#F2C94C"
+BG = "#0E0E0E"
+CARD = "#151515"
+TEXT = "#FFFFFF"
+MUTED = "#CFCFCF"
+BORDER = "rgba(255,255,255,0.08)"
+
 st.markdown(
-    """
+    f"""
 <style>
-:root{
-  --bg: #F7F7F5;
-  --card: #FFFFFF;
-  --text: #111111;
-  --muted: #6B6B6B;
-  --border: rgba(17,17,17,0.10);
-  --shadow: 0 10px 30px rgba(0,0,0,0.06);
+:root {{
+  --bg: {BG};
+  --card: {CARD};
+  --text: {TEXT};
+  --muted: {MUTED};
+  --accent: {HURST_YELLOW};
+  --border: {BORDER};
   --radius: 18px;
-}
-html, body, [data-testid="stAppViewContainer"]{
-  background: var(--bg) !important;
-}
-[data-testid="stSidebar"]{
-  background: #FFFFFF !important;
+}}
+
+html, body, [data-testid="stAppViewContainer"] {{
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+}}
+
+[data-testid="stSidebar"] {{
+  background-color: var(--card) !important;
   border-right: 1px solid var(--border);
-}
-h1, h2, h3{
+}}
+
+h1, h2, h3, h4 {{
+  color: var(--text) !important;
   letter-spacing: -0.02em;
-}
-.small-muted{
+}}
+
+.small-muted {{
   color: var(--muted);
-  font-size: 0.9rem;
-}
-.hero{
-  padding: 18px 18px 6px 18px;
+  font-size: 0.92rem;
+}}
+
+.hero {{
+  padding: 18px 18px 10px 18px;
   border-radius: var(--radius);
-  background: linear-gradient(180deg, #FFFFFF 0%, #FFFFFF 100%);
+  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow);
   margin-bottom: 14px;
-}
-.hero-title{
+}}
+
+.hero-title {{
   font-size: 2.1rem;
   font-weight: 800;
   margin: 0;
   color: var(--text);
-}
-.hero-sub{
-  margin-top: 6px;
+}}
+
+.hero-sub {{
+  margin-top: 8px;
   color: var(--muted);
   font-size: 1rem;
-}
-.card{
+}}
+
+.card {{
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
   padding: 14px 14px;
-}
-.card h3{
-  margin: 0 0 10px 0;
-}
-.divider-soft{
+  margin-bottom: 12px;
+}}
+
+.divider-soft {{
   height: 1px;
   background: var(--border);
-  margin: 12px 0;
-}
+  margin: 16px 0;
+}}
+
+[data-testid="stMetricValue"] {{
+  color: var(--text) !important;
+}}
+
+[data-testid="stMetricDelta"] {{
+  color: var(--muted) !important;
+}}
 </style>
 """,
     unsafe_allow_html=True,
@@ -121,11 +143,11 @@ def add_period_cols(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
     if df.empty:
         return df
 
-    df["PERIODO_DIA"] = df[date_col].dt.date.astype(str)                 # YYYY-MM-DD
-    df["PERIODO_MES"] = df[date_col].dt.to_period("M").astype(str)       # YYYY-MM
-    q = df[date_col].dt.to_period("Q").astype(str)                       # 2025Q3
-    df["PERIODO_TRIM"] = q.str.replace("Q", "-Q", regex=False)           # 2025-Q3
-    df["PERIODO_ANO"] = df[date_col].dt.year.astype(str)                 # YYYY
+    df["PERIODO_DIA"] = df[date_col].dt.date.astype(str)           # YYYY-MM-DD
+    df["PERIODO_MES"] = df[date_col].dt.to_period("M").astype(str) # YYYY-MM
+    q = df[date_col].dt.to_period("Q").astype(str)                 # 2025Q3
+    df["PERIODO_TRIM"] = q.str.replace("Q", "-Q", regex=False)     # 2025-Q3
+    df["PERIODO_ANO"] = df[date_col].dt.year.astype(str)           # YYYY
     return df
 
 
@@ -147,21 +169,22 @@ def filter_by_mode(df: pd.DataFrame, mode: str, date_col: str, selection):
         df2[date_col] = pd.to_datetime(df2[date_col], errors="coerce")
         return df2[(df2[date_col] >= start_ts) & (df2[date_col] <= end_ts)]
 
-    # Para os demais, usamos as colunas periodizadas
-    col_map = {
-        "Mês": "PERIODO_MES",
-        "Trimestre": "PERIODO_TRIM",
-        "Ano": "PERIODO_ANO",
-    }
+    col_map = {"Mês": "PERIODO_MES", "Trimestre": "PERIODO_TRIM", "Ano": "PERIODO_ANO"}
     pcol = col_map.get(mode)
     if not pcol or pcol not in df.columns:
         return df
 
     sel_list = selection or []
     if not sel_list:
-        return df.iloc[0:0]  # nada selecionado => vazio (mais seguro)
-
+        return df.iloc[0:0]  # nada selecionado => vazio
     return df[df[pcol].isin(sel_list)]
+
+
+def unique_sorted(df: pd.DataFrame, col: str):
+    if df is None or df.empty or col not in df.columns:
+        return []
+    vals = df[col].dropna().astype(str).unique().tolist()
+    return sorted(vals)
 
 
 def currency_fmt(v: float) -> str:
@@ -171,6 +194,40 @@ def currency_fmt(v: float) -> str:
         return f"R$ {float(v):,.2f}"
     except Exception:
         return "—"
+
+
+def fig_bar(df, x, y, color=None):
+    # barras amarelas por padrão
+    if color:
+        fig = px.bar(df, x=x, y=y, color=color)
+        fig.update_layout(
+            plot_bgcolor=BG, paper_bgcolor=BG, font_color=TEXT,
+            legend_title_text=""
+        )
+        return fig
+
+    fig = px.bar(df, x=x, y=y, color_discrete_sequence=[HURST_YELLOW])
+    fig.update_layout(
+        plot_bgcolor=BG, paper_bgcolor=BG, font_color=TEXT,
+        legend_title_text=""
+    )
+    return fig
+
+
+def fig_line(df, x, y, color=None, markers=True):
+    # linha amarela quando é série única; multi-série usa paleta amarelo→branco
+    if color:
+        fig = px.line(df, x=x, y=y, color=color, markers=markers,
+                      color_discrete_sequence=px.colors.sequential.YlOrBr)
+    else:
+        fig = px.line(df, x=x, y=y, markers=markers,
+                      color_discrete_sequence=[HURST_YELLOW])
+
+    fig.update_layout(
+        plot_bgcolor=BG, paper_bgcolor=BG, font_color=TEXT,
+        legend_title_text=""
+    )
+    return fig
 
 
 # -----------------------------
@@ -186,7 +243,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### Filtro de período")
-    filter_mode = st.radio("Filtrar por", ["Dia", "Mês", "Trimestre", "Ano"], horizontal=False)
+    filter_mode = st.radio("Filtrar por", ["Dia", "Mês", "Trimestre", "Ano"])
 
     st.markdown('<div class="small-muted">O filtro afeta categorias, rubricas e obras.</div>', unsafe_allow_html=True)
 
@@ -237,7 +294,6 @@ with st.status("Processando PDFs...", expanded=True) as status:
 
     status.update(label="Processamento concluído!", state="complete")
 
-
 # Consolidar
 df_cat = pd.concat(dfs_cat, ignore_index=True) if dfs_cat else pd.DataFrame()
 df_rub = pd.concat(dfs_rub, ignore_index=True) if dfs_rub else pd.DataFrame()
@@ -252,45 +308,27 @@ df_cat = add_period_cols(df_cat, "DATA REFERENTE")
 df_rub = add_period_cols(df_rub, "DATA REFERENTE")
 df_obr = add_period_cols(df_obr, "Data")
 
-
-# -----------------------------
-# Construção do seletor de filtro (com base nas datas reais)
-# -----------------------------
-# Coletar range global (para modo "Dia") e listas (para Mês/Trim/Ano)
+# Range global (modo Dia) e listas (mês/trim/ano)
 all_dates = []
 for df, col in [(df_cat, "DATA REFERENTE"), (df_rub, "DATA REFERENTE"), (df_obr, "Data")]:
     if df is not None and not df.empty and col in df.columns:
         all_dates.extend([df[col].min(), df[col].max()])
 all_dates = [d for d in all_dates if pd.notna(d)]
-
-if all_dates:
-    min_dt = min(all_dates)
-    max_dt = max(all_dates)
-else:
-    # fallback
-    min_dt = pd.to_datetime("2000-01-01")
-    max_dt = pd.to_datetime("2000-01-01")
-
-
-def unique_sorted(df: pd.DataFrame, col: str):
-    if df is None or df.empty or col not in df.columns:
-        return []
-    vals = df[col].dropna().astype(str).unique().tolist()
-    return sorted(vals)
-
+min_dt = min(all_dates) if all_dates else pd.to_datetime("2000-01-01")
+max_dt = max(all_dates) if all_dates else pd.to_datetime("2000-01-01")
 
 months = sorted(set(unique_sorted(df_cat, "PERIODO_MES") + unique_sorted(df_rub, "PERIODO_MES") + unique_sorted(df_obr, "PERIODO_MES")))
 quarters = sorted(set(unique_sorted(df_cat, "PERIODO_TRIM") + unique_sorted(df_rub, "PERIODO_TRIM") + unique_sorted(df_obr, "PERIODO_TRIM")))
 years = sorted(set(unique_sorted(df_cat, "PERIODO_ANO") + unique_sorted(df_rub, "PERIODO_ANO") + unique_sorted(df_obr, "PERIODO_ANO")))
 
-
-# UI do filtro (na sidebar, mas precisa renderizar aqui para usar valores)
+# UI do filtro (na sidebar)
 with st.sidebar:
     if filter_mode == "Dia":
         start_date, end_date = st.date_input(
             "Intervalo de datas",
             value=(min_dt.date(), max_dt.date())
         )
+        # inclui o dia inteiro do end_date
         sel = (pd.to_datetime(start_date), pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
 
     elif filter_mode == "Mês":
@@ -305,16 +343,12 @@ with st.sidebar:
         default = years[-3:] if len(years) >= 3 else years
         sel = st.multiselect("Selecione ano(s)", years, default=default)
 
-
 # Aplicar filtro
 df_cat_f = filter_by_mode(df_cat, filter_mode, "DATA REFERENTE", sel)
 df_rub_f = filter_by_mode(df_rub, filter_mode, "DATA REFERENTE", sel)
 df_obr_f = filter_by_mode(df_obr, filter_mode, "Data", sel)
 
-
-# -----------------------------
 # Totais + Reconciliação
-# -----------------------------
 total_cat = 0.0
 total_rub = 0.0
 total_obr = 0.0
@@ -338,10 +372,7 @@ if total_rub > 0 and total_obr > 0:
         total_obr = df_obr_f["Rateio"].sum()
         st.caption(f"⚙️ Obras normalizado para bater com Rubricas (fator: {fator:.4f}).")
 
-
-# -----------------------------
 # KPIs (Cards)
-# -----------------------------
 k1, k2, k3 = st.columns(3)
 with k1:
     st.markdown('<div class="card"><h3>Total (Categorias)</h3></div>', unsafe_allow_html=True)
@@ -355,37 +386,25 @@ with k3:
 
 st.markdown('<div class="divider-soft"></div>', unsafe_allow_html=True)
 
-
-# -----------------------------
 # Evolução (Rubricas)
-# -----------------------------
 st.markdown('<div class="card"><h3>Evolução (Rubricas)</h3></div>', unsafe_allow_html=True)
-if df_rub_f.empty or "TOTAL GERAL" not in df_rub_f.columns:
+if df_rub_f.empty or "TOTAL GERAL" not in df_rub_f.columns or "PERIODO_MES" not in df_rub_f.columns:
     st.info("Sem dados suficientes.")
 else:
     tmp = df_rub_f.copy()
     tmp["TOTAL GERAL"] = pd.to_numeric(tmp["TOTAL GERAL"], errors="coerce").fillna(0)
-
-    # eixo por mês (faz sentido mesmo com filtro por ano/trim/mês)
-    if "PERIODO_MES" in tmp.columns:
-        rub_month = (
-            tmp.groupby("PERIODO_MES", as_index=False)["TOTAL GERAL"]
-               .sum()
-               .sort_values("PERIODO_MES")
-        )
-        st.plotly_chart(px.bar(rub_month, x="PERIODO_MES", y="TOTAL GERAL"), use_container_width=True)
-    else:
-        st.info("Sem informação de mês disponível.")
+    rub_month = (
+        tmp.groupby("PERIODO_MES", as_index=False)["TOTAL GERAL"]
+           .sum()
+           .sort_values("PERIODO_MES")
+    )
+    st.plotly_chart(fig_bar(rub_month, x="PERIODO_MES", y="TOTAL GERAL"), use_container_width=True)
 
 st.markdown('<div class="divider-soft"></div>', unsafe_allow_html=True)
 
-
-# -----------------------------
 # Abas detalhadas
-# -----------------------------
 st.markdown('<div class="card"><h3>Análises detalhadas</h3></div>', unsafe_allow_html=True)
 tab1, tab2, tab3 = st.tabs(["Rubricas", "Categorias", "Obras"])
-
 
 with tab1:
     st.subheader("Rubricas — Ranking e Drilldown")
@@ -411,7 +430,7 @@ with tab1:
                  .sum()
                  .sort_values("TOTAL GERAL", ascending=False)
         )
-        st.plotly_chart(px.bar(by_modelo.head(topn), x="Rubrica_Modelo", y="TOTAL GERAL"), use_container_width=True)
+        st.plotly_chart(fig_bar(by_modelo.head(topn), x="Rubrica_Modelo", y="TOTAL GERAL"), use_container_width=True)
         st.dataframe(by_modelo.head(topn), use_container_width=True)
 
         st.markdown("#### Drilldown: Rubricas dentro do Modelo")
@@ -427,9 +446,8 @@ with tab1:
                  .sort_values("TOTAL GERAL", ascending=False)
                  .head(topn)
         )
-        st.plotly_chart(px.bar(by_rubrica, x="RUBRICA", y="TOTAL GERAL"), use_container_width=True)
+        st.plotly_chart(fig_bar(by_rubrica, x="RUBRICA", y="TOTAL GERAL"), use_container_width=True)
         st.dataframe(by_rubrica, use_container_width=True)
-
 
 with tab2:
     st.subheader("Categorias — Distribuição e Evolução")
@@ -453,10 +471,13 @@ with tab2:
         )
 
         if modo == "Barras":
-            st.plotly_chart(px.bar(by_cat.head(topn), x="CATEGORIA", y="TOTAL GERAL"), use_container_width=True)
+            st.plotly_chart(fig_bar(by_cat.head(topn), x="CATEGORIA", y="TOTAL GERAL"), use_container_width=True)
         else:
             pie = by_cat.head(min(topn, 12)).copy()
-            st.plotly_chart(px.pie(pie, names="CATEGORIA", values="TOTAL GERAL"), use_container_width=True)
+            fig = px.pie(pie, names="CATEGORIA", values="TOTAL GERAL",
+                         color_discrete_sequence=[HURST_YELLOW, "#EDEDED", "#CFCFCF", "#AFAFAF"])
+            fig.update_layout(plot_bgcolor=BG, paper_bgcolor=BG, font_color=TEXT)
+            st.plotly_chart(fig, use_container_width=True)
 
         if "PERIODO_MES" in tmp.columns and tmp["PERIODO_MES"].nunique() >= 2:
             evol = (
@@ -464,10 +485,9 @@ with tab2:
                    .sum()
                    .sort_values("PERIODO_MES")
             )
-            st.plotly_chart(px.line(evol, x="PERIODO_MES", y="TOTAL GERAL", color="CATEGORIA"), use_container_width=True)
+            st.plotly_chart(fig_line(evol, x="PERIODO_MES", y="TOTAL GERAL", color="CATEGORIA"), use_container_width=True)
         else:
             st.caption("Evolução mensal aparece quando houver 2+ meses no filtro.")
-
 
 with tab3:
     st.subheader("Obras — Evolução mês a mês (comparação)")
@@ -483,7 +503,7 @@ with tab3:
         else:
             obras = sorted(tmp["Nome Obra"].unique().tolist())
 
-            # sugestão automática (top 5)
+            # sugestão automática (top 5 do filtro)
             sugestao = (
                 tmp.groupby("Nome Obra", as_index=False)["Rateio"]
                    .sum()
@@ -506,7 +526,7 @@ with tab3:
                    .sort_values("Rateio", ascending=False)
                    .head(topn)
             )
-            st.plotly_chart(px.bar(by_obra, x="Nome Obra", y="Rateio"), use_container_width=True)
+            st.plotly_chart(fig_bar(by_obra, x="Nome Obra", y="Rateio"), use_container_width=True)
             st.dataframe(by_obra, use_container_width=True)
 
             st.markdown("#### Evolução mensal (obras selecionadas)")
@@ -519,16 +539,10 @@ with tab3:
                          .sum()
                          .sort_values("PERIODO_MES")
                 )
-                st.plotly_chart(
-                    px.line(obra_month, x="PERIODO_MES", y="Rateio", color="Nome Obra", markers=True),
-                    use_container_width=True
-                )
+                st.plotly_chart(fig_line(obra_month, x="PERIODO_MES", y="Rateio", color="Nome Obra"), use_container_width=True)
                 st.dataframe(obra_month, use_container_width=True)
 
-
-# -----------------------------
-# Tabelas (debug / transparência)
-# -----------------------------
+# Tabelas (debug)
 with st.expander("Ver tabelas (debug)", expanded=False):
     st.subheader("Categorias (filtrado)")
     st.dataframe(df_cat_f, use_container_width=True)
