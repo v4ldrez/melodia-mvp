@@ -1,8 +1,7 @@
 [theme]
 base = "dark"
-
-primaryColor = "#F2C94C"          # amarelo (Hurst)
-backgroundColor = "#0E0E0E"       # preto principal
-secondaryBackgroundColor = "#151515"  # cards / sidebar
-textColor = "#FFFFFF"            # texto branco
+primaryColor = "#F2C94C"
+backgroundColor = "#0E0E0E"
+secondaryBackgroundColor = "#151515"
+textColor = "#FFFFFF"
 font = "sans serif"
